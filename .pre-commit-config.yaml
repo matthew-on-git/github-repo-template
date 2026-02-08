@@ -30,6 +30,8 @@ repos:
         args: ['--verbose', '--no-banner']
 
   # Security: Detect hardcoded secrets and passwords
+  # Note: detect-secrets is also run via 'make security' for consistency
+  # If baseline doesn't exist, it will be created automatically
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:
@@ -58,12 +60,13 @@ repos:
       - id: black
         args: ['--line-length=100']
 
-  # Python linting
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.0.1
-    hooks:
-      - id: flake8
-        args: ['--max-line-length=100', '--extend-ignore=E203,W503']
+  # Python linting (flake8 is run via Makefile in Docker for consistency)
+  # Uncomment below if you want to run flake8 via pre-commit instead:
+  # - repo: https://github.com/pycqa/flake8
+  #   rev: 6.1.0
+  #   hooks:
+  #     - id: flake8
+  #       args: ['--max-line-length=100', '--extend-ignore=E203,W503']
 
   # Python import sorting
   - repo: https://github.com/pycqa/isort

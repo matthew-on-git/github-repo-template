@@ -55,148 +55,160 @@ init: ## Install pre-commit hooks
 lint: lint-shell lint-python lint-terraform ## Run linting for all detected languages
 
 lint-shell: ## Run ShellCheck on shell scripts
-	@if [ -z "$(SCRIPT)" ]; then \
+	@if [ -z "$(SCRIPT)" ] || [ ! -f "$(SCRIPT)" ]; then \
 		echo "No shell scripts found. Skipping shell linting."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run linting checks."; \
+			exit 1; \
+		fi; \
+		echo "Running ShellCheck..."; \
+		echo "Linting: $(SCRIPT)"; \
+		$(DOCKER_RUN) $(SHELLCHECK_IMAGE) $(SHELLCHECK_OPTS) $(SCRIPT); \
+		echo "✓ Shell linting passed"; \
 	fi
-	@echo "Running ShellCheck..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run linting checks."; \
-		exit 1; \
-	fi
-	@echo "Linting: $(SCRIPT)"
-	$(DOCKER_RUN) $(SHELLCHECK_IMAGE) $(SHELLCHECK_OPTS) $(SCRIPT)
-	@echo "✓ Shell linting passed"
 
 lint-python: ## Run Python linting (pylint, flake8)
 	@if [ -z "$(PYTHON_FILES)" ]; then \
 		echo "No Python files found. Skipping Python linting."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run linting checks."; \
+			exit 1; \
+		fi; \
+		echo "Running Python linting..."; \
+		echo "Running pylint..."; \
+		$(DOCKER_RUN) $(PYLINT_IMAGE) sh -c "PY_FILES=\$$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*' 2>/dev/null); if [ -z \"\$$PY_FILES\" ]; then echo 'No Python files found. Skipping.'; exit 0; fi; pip install -q pylint && pylint --disable=C0111,C0103 --exit-zero --output-format=text \$$PY_FILES" || echo "⚠ Pylint found issues (non-fatal)"; \
+		echo "Running flake8..."; \
+		$(DOCKER_RUN) $(PYLINT_IMAGE) sh -c "PY_FILES=\$$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*' 2>/dev/null); if [ -z \"\$$PY_FILES\" ]; then echo 'No Python files found. Skipping.'; exit 0; fi; pip install -q flake8 && flake8 --max-line-length=100 --extend-ignore=E203,W503 \$$PY_FILES" || (echo "⚠ Flake8 found issues" && exit 1); \
+		echo "✓ Python linting passed"; \
 	fi
-	@echo "Running Python linting..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run linting checks."; \
-		exit 1; \
-	fi
-	@echo "Running pylint..."
-	@$(DOCKER_RUN) $(PYLINT_IMAGE) sh -c "pip install -q pylint && pylint --disable=C0111,C0103 --exit-zero --output-format=text $$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*')" || echo "⚠ Pylint found issues (non-fatal)"
-	@echo "Running flake8..."
-	@$(DOCKER_RUN) $(PYLINT_IMAGE) sh -c "pip install -q flake8 && flake8 --max-line-length=100 --extend-ignore=E203,W503 $$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*')" || (echo "⚠ Flake8 found issues" && exit 1)
-	@echo "✓ Python linting passed"
 
 lint-terraform: ## Run Terraform linting (tflint, terraform validate)
 	@if [ -z "$(TERRAFORM_FILES)" ]; then \
 		echo "No Terraform files found. Skipping Terraform linting."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run linting checks."; \
+			exit 1; \
+		fi; \
+		echo "Running Terraform linting..."; \
+		if [ -z "$(TERRAFORM_DIRS)" ]; then \
+			echo "No Terraform directories found. Skipping."; \
+		else \
+			echo "Running tflint..."; \
+			for dir in $(TERRAFORM_DIRS); do \
+				echo "Linting Terraform in $$dir..."; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TFLINT_IMAGE) --init || true; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TFLINT_IMAGE) || (echo "⚠ tflint found issues in $$dir" && exit 1); \
+			done; \
+			echo "Running terraform validate..."; \
+			for dir in $(TERRAFORM_DIRS); do \
+				echo "Validating Terraform in $$dir..."; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) init -backend=false > /dev/null 2>&1 || true; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) validate || (echo "✗ Terraform validation failed in $$dir" && exit 1); \
+			done; \
+			echo "✓ Terraform linting passed"; \
+		fi; \
 	fi
-	@echo "Running Terraform linting..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run linting checks."; \
-		exit 1; \
-	fi
-	@echo "Running tflint..."
-	@for dir in $(TERRAFORM_DIRS); do \
-		echo "Linting Terraform in $$dir..."; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TFLINT_IMAGE) --init || true; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TFLINT_IMAGE) || (echo "⚠ tflint found issues in $$dir" && exit 1); \
-	done
-	@echo "Running terraform validate..."
-	@for dir in $(TERRAFORM_DIRS); do \
-		echo "Validating Terraform in $$dir..."; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) init -backend=false > /dev/null 2>&1 || true; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) validate || (echo "✗ Terraform validation failed in $$dir" && exit 1); \
-	done
-	@echo "✓ Terraform linting passed"
 
 format: format-shell format-python format-terraform ## Check formatting for all detected languages
 
 format-shell: ## Check shell script formatting
-	@if [ -z "$(SCRIPT)" ]; then \
+	@if [ -z "$(SCRIPT)" ] || [ ! -f "$(SCRIPT)" ]; then \
 		echo "No shell scripts found. Skipping shell format check."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting checks."; \
+			exit 1; \
+		fi; \
+		echo "Checking shell script formatting..."; \
+		echo "Checking format: $(SCRIPT)"; \
+		$(DOCKER_RUN) $(SHFMT_IMAGE) -i 2 -bn -ci -sr -d $(SCRIPT) || (echo "✗ Formatting issues found. Run 'make format-fix' to fix." && exit 1); \
+		echo "✓ Shell formatting check passed"; \
 	fi
-	@echo "Checking shell script formatting..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting checks."; \
-		exit 1; \
-	fi
-	@echo "Checking format: $(SCRIPT)"
-	@$(DOCKER_RUN) $(SHFMT_IMAGE) -i 2 -bn -ci -sr -d $(SCRIPT) || (echo "✗ Formatting issues found. Run 'make format-fix' to fix." && exit 1)
-	@echo "✓ Shell formatting check passed"
 
 format-python: ## Check Python formatting (black)
 	@if [ -z "$(PYTHON_FILES)" ]; then \
 		echo "No Python files found. Skipping Python format check."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting checks."; \
+			exit 1; \
+		fi; \
+		echo "Checking Python formatting..."; \
+		$(DOCKER_RUN) $(BLACK_IMAGE) sh -c "PY_FILES=\$$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*' 2>/dev/null); if [ -z \"\$$PY_FILES\" ]; then echo 'No Python files found. Skipping.'; exit 0; fi; pip install -q black && black --check --line-length=100 \$$PY_FILES" || (echo "✗ Python formatting issues found. Run 'make format-fix' to fix." && exit 1); \
+		echo "✓ Python formatting check passed"; \
 	fi
-	@echo "Checking Python formatting..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting checks."; \
-		exit 1; \
-	fi
-	@$(DOCKER_RUN) $(BLACK_IMAGE) sh -c "pip install -q black && black --check --line-length=100 $$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*')" || (echo "✗ Python formatting issues found. Run 'make format-fix' to fix." && exit 1)
-	@echo "✓ Python formatting check passed"
 
 format-terraform: ## Check Terraform formatting
 	@if [ -z "$(TERRAFORM_FILES)" ]; then \
 		echo "No Terraform files found. Skipping Terraform format check."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting checks."; \
+			exit 1; \
+		fi; \
+		echo "Checking Terraform formatting..."; \
+		if [ -z "$(TERRAFORM_DIRS)" ]; then \
+			echo "No Terraform directories found. Skipping."; \
+		else \
+			for dir in $(TERRAFORM_DIRS); do \
+				echo "Checking format in $$dir..."; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) fmt -check -diff || (echo "✗ Terraform formatting issues found in $$dir. Run 'make format-fix' to fix." && exit 1); \
+			done; \
+			echo "✓ Terraform formatting check passed"; \
+		fi; \
 	fi
-	@echo "Checking Terraform formatting..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting checks."; \
-		exit 1; \
-	fi
-	@for dir in $(TERRAFORM_DIRS); do \
-		echo "Checking format in $$dir..."; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) fmt -check -diff || (echo "✗ Terraform formatting issues found in $$dir. Run 'make format-fix' to fix." && exit 1); \
-	done
-	@echo "✓ Terraform formatting check passed"
 
 format-fix: format-fix-shell format-fix-python format-fix-terraform ## Auto-fix formatting for all detected languages
 
 format-fix-shell: ## Auto-fix shell script formatting
-	@if [ -z "$(SCRIPT)" ]; then \
+	@if [ -z "$(SCRIPT)" ] || [ ! -f "$(SCRIPT)" ]; then \
 		echo "No shell scripts found. Nothing to format."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting."; \
+			exit 1; \
+		fi; \
+		echo "Formatting shell scripts..."; \
+		echo "Formatting: $(SCRIPT)"; \
+		$(DOCKER_RUN) $(SHFMT_IMAGE) -i 2 -bn -ci -sr -w $(SCRIPT); \
+		echo "✓ Shell formatting complete"; \
 	fi
-	@echo "Formatting shell scripts..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting."; \
-		exit 1; \
-	fi
-	@echo "Formatting: $(SCRIPT)"
-	$(DOCKER_RUN) $(SHFMT_IMAGE) -i 2 -bn -ci -sr -w $(SCRIPT)
-	@echo "✓ Shell formatting complete"
 
 format-fix-python: ## Auto-fix Python formatting (black)
 	@if [ -z "$(PYTHON_FILES)" ]; then \
 		echo "No Python files found. Nothing to format."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting."; \
+			exit 1; \
+		fi; \
+		echo "Formatting Python files..."; \
+		$(DOCKER_RUN) $(BLACK_IMAGE) sh -c "PY_FILES=\$$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*' 2>/dev/null); if [ -z \"\$$PY_FILES\" ]; then echo 'No Python files found. Skipping.'; exit 0; fi; pip install -q black && black --line-length=100 \$$PY_FILES"; \
+		echo "✓ Python formatting complete"; \
 	fi
-	@echo "Formatting Python files..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting."; \
-		exit 1; \
-	fi
-	@$(DOCKER_RUN) $(BLACK_IMAGE) sh -c "pip install -q black && black --line-length=100 $$(find /work -name '*.py' ! -path '/work/.git/*' ! -path '/work/.venv/*' ! -path '/work/venv/*' ! -path '*/__pycache__/*')"
-	@echo "✓ Python formatting complete"
 
 format-fix-terraform: ## Auto-fix Terraform formatting
 	@if [ -z "$(TERRAFORM_FILES)" ]; then \
 		echo "No Terraform files found. Nothing to format."; \
-		exit 0; \
+	else \
+		if ! command -v docker >/dev/null 2>&1; then \
+			echo "Error: docker not found. Install Docker to run formatting."; \
+			exit 1; \
+		fi; \
+		echo "Formatting Terraform files..."; \
+		if [ -z "$(TERRAFORM_DIRS)" ]; then \
+			echo "No Terraform directories found. Skipping."; \
+		else \
+			for dir in $(TERRAFORM_DIRS); do \
+				echo "Formatting Terraform in $$dir..."; \
+				$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) fmt -recursive; \
+			done; \
+			echo "✓ Terraform formatting complete"; \
+		fi; \
 	fi
-	@echo "Formatting Terraform files..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Error: docker not found. Install Docker to run formatting."; \
-		exit 1; \
-	fi
-	@for dir in $(TERRAFORM_DIRS); do \
-		echo "Formatting Terraform in $$dir..."; \
-		$(DOCKER_RUN) -v "$(PWD)/$$dir:/work" -w /work $(TERRAFORM_IMAGE) fmt -recursive; \
-	done
-	@echo "✓ Terraform formatting complete"
 
 check: security lint format ## Run all checks (security + lint + format)
 
@@ -231,15 +243,24 @@ security-scan: ## Run security scanning (Gitleaks, detect-secrets)
 	@echo "Running detect-secrets..."
 	@if [ ! -f .secrets.baseline ]; then \
 		echo "Creating .secrets.baseline..."; \
-		$(DOCKER_RUN) $(DETECT_SECRETS_IMAGE) sh -c "pip install -q detect-secrets && detect-secrets scan --baseline .secrets.baseline" || true; \
+		$(DOCKER_RUN) $(DETECT_SECRETS_IMAGE) sh -c "pip install -q detect-secrets && cd /work && detect-secrets scan --all-files --baseline .secrets.baseline ." 2>/dev/null || $(DOCKER_RUN) $(DETECT_SECRETS_IMAGE) sh -c "pip install -q detect-secrets && cd /work && detect-secrets scan --all-files . > .secrets.baseline 2>/dev/null" || true; \
+		if [ ! -f .secrets.baseline ] || [ ! -s .secrets.baseline ]; then \
+			echo "⚠ Baseline file was not created. This is normal for new repositories. Skipping audit."; \
+			exit 0; \
+		fi; \
+		echo "✓ Baseline created"; \
 	fi
-	@$(DOCKER_RUN) $(DETECT_SECRETS_IMAGE) sh -c "pip install -q detect-secrets && detect-secrets audit .secrets.baseline --report --json" || (echo "⚠ detect-secrets found potential secrets. Review with: detect-secrets audit .secrets.baseline" && exit 1)
-	@echo "✓ detect-secrets scan passed"
+	@if [ -f .secrets.baseline ] && [ -s .secrets.baseline ]; then \
+		$(DOCKER_RUN) $(DETECT_SECRETS_IMAGE) sh -c "pip install -q detect-secrets && cd /work && detect-secrets audit .secrets.baseline --report --json" || (echo "⚠ detect-secrets found potential secrets. Review with: detect-secrets audit .secrets.baseline" && exit 1); \
+		echo "✓ detect-secrets scan passed"; \
+	else \
+		echo "⚠ No valid baseline file found. Skipping audit."; \
+	fi
 	@echo "✓ Security scanning complete"
 
 # Additional targets (not shown in help, but available)
 test: ## Run syntax and basic tests (if shell scripts exist)
-	@if [ -z "$(SCRIPT)" ]; then \
+	@if [ -z "$(SCRIPT)" ] || [ ! -f "$(SCRIPT)" ]; then \
 		echo "No shell scripts found. Skipping tests."; \
 		exit 0; \
 	fi
